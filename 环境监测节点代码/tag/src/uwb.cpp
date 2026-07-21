@@ -1,9 +1,10 @@
 #include "uwb.h"
 #include "dw3000.h"
-
-// #define INITIATOR
-// #define MAIN_U1
-#define MAIN_U2
+#include <stdint.h> // 确保包含标准类型定义
+#include <ws2812b.h>
+#define INITIATOR
+#define MAIN_U1
+// #define MAIN_U2
 dwt_config_t config = {
     5,                /* Channel number. */
     DWT_PLEN_128,     /* Preamble length. Used in TX only. */
@@ -26,13 +27,15 @@ dwt_config_t config = {
 extern dwt_txconfig_t txconfig_options;
 
 uint8_t tag_tx_msg[] = {0x41, 0x88, 0, 0xCA, 0xDE, 0, 0, UID, 0, FUNC_CODE_INTER,
-                    0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                    0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                    0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+                        0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                        0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+
+                        0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
 uint8_t base_tx_msg[] = {0x41, 0x88, 0, 0xCA, 0xDE, 0, 0, UID1, 0, FUNC_CODE_INTER,
-                    0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                    0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                    0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+                         0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                         0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+
+                         0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
 uint8_t frame_seq_nb = 0;
 uint8_t rx_buffer[NUM_NODES - 1][BUF_LEN];
 
@@ -48,18 +51,24 @@ uint64_t poll_tx_ts, range_tx_ts;
 uint64_t ack_tx_ts, range_rx_ts;
 uint64_t ack_rx_ts[NUM_NODES - 1];
 uint64_t poll_rx_ts[NUM_NODES - 1];
+uint32_t poll_rx_ts1[NUM_NODES - 1], poll_rx_ts2[NUM_NODES - 1];
 uint64_t range_rx_from_others_ts[NUM_NODES - 1];
 uint64_t poll_rx_from_others_ts[NUM_NODES - 1];
 double t_round_1, t_reply_1, t_round_2, t_reply_2;
 double tof, distance;
+volatile double distance0, dis0= 0.0;
 unsigned long previous_debug_millis = 0;
 unsigned long current_debug_millis = 0;
 int millis_since_last_serial_print;
 uint32_t tx_time;
 uint64_t tx_ts;
+uint8_t door[NUM_NODES - 1];
+volatile uint8_t door1 = 0;
 int target_uids[NUM_NODES - 1];
-volatile uint8_t door = 2; 
-volatile uint8_t flag = 0; 
+volatile uint8_t is_uwb = 0;
+volatile uint8_t qf_uwb = 0;
+
+int key_flag = 0;
 void set_target_uids()
 {
 /*
@@ -206,7 +215,15 @@ void start_uwb()
     Serial.println(UID);
     Serial.println("Setup over........");
 }
-
+int e;
+int count = 0;
+double lastsum, sum = 0;
+uint8_t uint64_to_uint8_msb(uint64_t value)
+{
+    return (uint8_t)(value >> 56); // 右移56位，保留最高8位
+}
+uint16_t n;
+int uwb_flag = 0;
 void initiator()
 {
     if (!wait_ack && !wait_final && (counter == 0))
@@ -218,28 +235,34 @@ void initiator()
         dwt_writetxdata((uint16_t)(MSG_LEN), tag_tx_msg, 0);
         dwt_writetxfctrl((uint16_t)(MSG_LEN), 0, 1);
         dwt_starttx(DWT_START_TX_IMMEDIATE | DWT_RESPONSE_EXPECTED);
-        Serial.println("Poll........");
+
+        // Serial.println("Poll........");
     }
     else
     {
+        // Serial.println("Time........");
         dwt_write32bitreg(SYS_STATUS_ID, SYS_STATUS_TXFRS_BIT_MASK);
         dwt_rxenable(DWT_START_RX_IMMEDIATE);
-        Serial.println("Poll falled........");
     }
 
     while (!((status_reg = dwt_read32bitreg(SYS_STATUS_ID)) & (SYS_STATUS_RXFCG_BIT_MASK | SYS_STATUS_ALL_RX_TO |
                                                                SYS_STATUS_ALL_RX_ERR)))
     {
+        // vTaskDelay(0.5/ portTICK_PERIOD_MS); // 1秒发送一次
     };
     /* receive ack msg or final msg */
     if (status_reg & SYS_STATUS_RXFCG_BIT_MASK)
     {
-        Serial.println("ack receied........");
+        // Serial.println("ack received........");
         dwt_write32bitreg(SYS_STATUS_ID, SYS_STATUS_RXFCG_BIT_MASK);
         dwt_readrxdata(rx_buffer[counter], BUF_LEN, 0);
+        if(rx_buffer[counter][8] == 2){
+            qf_uwb = 2;
+        }else if(rx_buffer[counter][8] == 0){
+            qf_uwb = 1;
+        }
         if (rx_buffer[counter][MSG_SID_IDX] != target_uids[counter])
         {
-            Serial.println("target falled........");
             dwt_write32bitreg(SYS_STATUS_ID, SYS_STATUS_ALL_RX_TO | SYS_STATUS_ALL_RX_ERR);
             counter = 0;
             wait_ack = false;
@@ -250,17 +273,17 @@ void initiator()
         {
             ack_rx_ts[counter] = get_rx_timestamp_u64();
             resp_msg_get_ts(&rx_buffer[counter][10], &poll_rx_ts[counter]);
-            Serial.println(poll_rx_ts[counter]);
             ++counter;
         }
-        else
+        if (wait_final)
         {
             ++counter;
         }
     }
-    else
+    else if (status_reg & SYS_STATUS_ALL_RX_TO)
     { /* timeout or error, reset, send ack*/
         Serial.println("Timeout........");
+        is_uwb = 0;
         tag_tx_msg[MSG_SN_IDX] = frame_seq_nb;
         tag_tx_msg[MSG_FUNC_IDX] = FUNC_CODE_RESET;
         dwt_write32bitreg(SYS_STATUS_ID, SYS_STATUS_TXFRS_BIT_MASK);
@@ -274,8 +297,14 @@ void initiator()
         Sleep(1);
         return;
     }
+    else
+    {
+        Serial.println("error........");
+        return;
+    }
     if (wait_ack && (counter == NUM_NODES - 1))
     { /* received all ack msg */
+        
         poll_tx_ts = get_tx_timestamp_u64();
         /* send range msg */
         tx_time = (ack_rx_ts[counter - 1] + (RX_TO_TX_DLY_UUS * UUS_TO_DWT_TIME)) >> 8;
@@ -285,6 +314,7 @@ void initiator()
         dwt_writetxdata((uint16_t)(BUF_LEN), tag_tx_msg, 0);
         dwt_writetxfctrl((uint16_t)(BUF_LEN), 0, 1);
         ret = dwt_starttx(DWT_START_TX_DELAYED | DWT_RESPONSE_EXPECTED);
+
         if (ret == DWT_SUCCESS)
         {
             while (!(dwt_read32bitreg(SYS_STATUS_ID) & SYS_STATUS_TXFRS_BIT_MASK))
@@ -294,6 +324,7 @@ void initiator()
             wait_final = true;
             counter = 0;
             dwt_write32bitreg(SYS_STATUS_ID, SYS_STATUS_TXFRS_BIT_MASK);
+            dwt_rxenable(DWT_START_RX_IMMEDIATE);
         }
         return;
     }
@@ -301,42 +332,99 @@ void initiator()
     { /* received all final msg */
         range_tx_ts = get_tx_timestamp_u64();
         current_debug_millis = millis();
-        Serial.print("Interval: ");
-        Serial.print(current_debug_millis - previous_debug_millis);
-        Serial.print("ms\t");
+        is_uwb = rx_buffer[0][6];
+        key_flag = rx_buffer[0][27];
+        if (key_flag == 1)
+        {
+            door1 = rx_buffer[0][26];
+            Serial.print("rx=");
+            Serial.println(rx_buffer[0][26]);
+            Serial.print("door1= ");
+            Serial.println(door1);
+            if (door1 == 1)
+            {
+                strip.setPixelColor(0, strip.Color(0, 250, 0)); // 红色 RGB(50,0,0)
+                strip.show();
+            }
+            else if (door1 == 0)
+            {
+                strip.setPixelColor(0, strip.Color(250, 0, 0)); // 红色 RGB(50,0,0)
+                strip.show();
+            }
+            key_flag = 0;
+        }
+
         for (int i = 0; i < counter; i++)
         {
-            resp_msg_get_ts(&rx_buffer[i][TX_TS_IDX], &ack_tx_ts);
-            resp_msg_get_ts(&rx_buffer[i][UID], &range_rx_ts);
+            resp_msg_get_ts(&rx_buffer[i][18], &ack_tx_ts);
+            resp_msg_get_ts(&rx_buffer[i][10], &range_rx_ts);
             t_round_1 = ack_rx_ts[i] - poll_tx_ts;
             t_round_2 = (range_rx_ts - ack_tx_ts);   // * (1 - clockOffsetRatioFinal);
             t_reply_1 = (ack_tx_ts - poll_rx_ts[i]); // * (1 - clockOffsetRatioAck);
             t_reply_2 = range_tx_ts - ack_rx_ts[i];
-            tof = (t_round_1 * t_round_2 - t_reply_1 * t_reply_2) /
-                  (t_round_1 + t_round_2 + t_reply_1 + t_reply_2) * DWT_TIME_UNITS;
-            distance = tof * SPEED_OF_LIGHT;
+            tof = ((t_round_1 * t_round_2 - t_reply_1 * t_reply_2) /
+                       (t_round_1 + t_round_2 + t_reply_1 + t_reply_2) +
+                   33) *
+                  DWT_TIME_UNITS; // 34
+            distance = tof * SPEED_OF_LIGHT - 0.57;
             snprintf(dist_str, sizeof(dist_str), "%3.3f m\t", distance);
-            Serial.print(rx_buffer[i][MSG_SID_IDX]);
-            Serial.print("\t");
-            Serial.print(dist_str);
+
+            // Serial.print(dist_str);
         }
-        Serial.println();
-        previous_debug_millis = current_debug_millis;
+        sum = sum + distance;
+        ++count;
+        if (count == 10) // c=12,t=34可以 c=5也行
+        {
+            // lastsum = sum / 10.0;
+            // Serial.print("Interval: ");
+            // Serial.print(current_debug_millis - previous_debug_millis);
+            // Serial.print("ms\t");
+            // Serial.print("Tag\t  ");
+            if (sum / 10.0 < 0 || sum / 10.0 > 20.0)
+            {
+                lastsum = lastsum;
+                dis0 = lastsum;
+                distance0 = lastsum + 0.6;
+              
+                // Serial.print(distance);
+            }
+            else
+            {
+                lastsum = sum / 10.0;
+                dis0 = lastsum;
+                distance0 = lastsum + 0.6;
+                // Serial.print(distance);
+            }
+            sum = 0;
+            count = 0;
+            previous_debug_millis = current_debug_millis;
+            // Serial.println();
+        }
+
+        // Serial.println();
+        // Serial.print("poll_tx_ts: ");
+        // Serial.println(poll_tx_ts);
+        // Serial.print("ack_rx_ts: ");
+        // Serial.println(ack_rx_ts[0]);
+        // Serial.print("range_tx_ts: ");
+        // Serial.println(range_tx_ts);
+        // Serial.print("poll_rx_ts: ");
+        // Serial.println(poll_rx_ts[0]);
+        // Serial.print("ack_tx_ts: ");
+        // Serial.println(ack_tx_ts);
+        // Serial.print("range_rx_ts: ");
+        // Serial.println(range_rx_ts);
+        // Serial.println();
         counter = 0;
         wait_ack = false;
         wait_final = false;
         ++frame_seq_nb;
-        Sleep(INTERVAL);
+        Sleep(5);
     }
 }
-int a = 0;
 
 void responder()
 {
-    // uint32_t chan_ctrl = dwt_read32bitreg(CHAN_CTRL_ID);
-    // bool is_64ghz = 1;
-    // is_64ghz = (chan_ctrl & 0x0200) != 0;  // 检查Bit 9
-    // Serial.println(is_64ghz);
     dwt_rxenable(DWT_START_RX_IMMEDIATE);
     while (!((status_reg = dwt_read32bitreg(SYS_STATUS_ID)) & (SYS_STATUS_RXFCG_BIT_MASK | SYS_STATUS_ALL_RX_TO |
                                                                SYS_STATUS_ALL_RX_ERR)))
@@ -346,12 +434,12 @@ void responder()
     };
     if (status_reg & SYS_STATUS_RXFCG_BIT_MASK)
     { /* receive msg */
-        // Serial.println("received........");
+        Serial.println("received........");
         dwt_write32bitreg(SYS_STATUS_ID, SYS_STATUS_RXFCG_BIT_MASK);
         dwt_readrxdata(rx_buffer[counter], BUF_LEN, 0);
         if (rx_buffer[counter][MSG_FUNC_IDX] == 0xE4)
         {
-            // Serial.println("1111........");
+            Serial.println("1111........");
             wait_poll = true;
             wait_ack = false;
             wait_range = false;
@@ -361,8 +449,7 @@ void responder()
         }
         if (rx_buffer[counter][MSG_SID_IDX] != target_uids[counter])
         {
-            // Serial.println(rx_buffer[counter][MSG_SID_IDX]);
-            // Serial.println("2222........");
+            Serial.println("2222........");
             dwt_write32bitreg(SYS_STATUS_ID, SYS_STATUS_ALL_RX_TO | SYS_STATUS_ALL_RX_ERR);
             wait_poll = true;
             wait_ack = false;
@@ -373,20 +460,20 @@ void responder()
         }
         if (wait_poll)
         { // received poll from U1
-            // Serial.println("Poll received........");
+            Serial.println("Poll received........");
             poll_rx_from_others_ts[counter] = get_rx_timestamp_u64();
             ++counter;
         }
         else if (wait_ack)
         { // after sending the poll, wait ack from U3 - U6
-            // Serial.println("ack received........");
+            Serial.println("ack received........");
             ack_rx_ts[counter] = get_rx_timestamp_u64();
             resp_msg_get_ts(&rx_buffer[counter][UID], &poll_rx_ts[counter]);
             ++counter; // increment counter
         }
         else if (wait_range)
         {
-            // Serial.println("range received........");
+            Serial.println("range received........");
             range_rx_from_others_ts[counter] = get_rx_timestamp_u64();
             ++counter;
         }
@@ -397,7 +484,7 @@ void responder()
     }
     else
     {
-        // Serial.println("Timeout........");
+        Serial.println("Timeout........");
         wait_poll = true;
         wait_ack = false;
         wait_range = false;
@@ -417,13 +504,7 @@ void responder()
         for (int i = 0; i < counter; i++)
         {
             resp_msg_set_ts(&base_tx_msg[10], poll_rx_from_others_ts[i]);
-            // for(int i = 0;i < 8;i++){
-            //     // Serial.printf("%d  ",a);  // 可选的空格分隔
-            //     // Serial.print(base_tx_msg[10 + i] , HEX);
-            //     // Serial.print(" ");  // 可选的空格分隔
-            // }
-            // Serial.println();
-            // Serial.println(poll_rx_from_others_ts[i]);
+            Serial.println(poll_rx_from_others_ts[i]);
         }
         dwt_writetxdata((uint16_t)(BUF_LEN), base_tx_msg, 0);
         dwt_writetxfctrl((uint16_t)(BUF_LEN), 0, 1);
@@ -431,13 +512,13 @@ void responder()
         if (ret == DWT_SUCCESS)
         {
             while (!(dwt_read32bitreg(SYS_STATUS_ID) & SYS_STATUS_TXFRS_BIT_MASK))
-            {};
-            // Serial.println("收到tag的poll后回传成功........");
+            {
+            };
+            Serial.println("收到tag的poll后回传成功........");
             wait_poll = false;
             wait_ack = true;
             dwt_write32bitreg(SYS_STATUS_ID, SYS_STATUS_TXFRS_BIT_MASK);
         }
-        ++a;
     }
     if (wait_ack && (counter == NUM_NODES - 1))
     { /* received all ack msg */
@@ -446,26 +527,18 @@ void responder()
         counter = 0;
         return; /* wait for range msg, since counter = 0, can directly return */
     }
-    if (wait_range && (counter == NUM_NODES - 1))
+    if (wait_range && (counter == RANGE_NUM))
     {
-        ack_tx_ts = get_tx_timestamp_u64(); /* poll tx, ack tx */
+        poll_tx_ts = get_tx_timestamp_u64(); /* poll tx, ack tx */
         /* received all range msg, send final to U1, U2, also range to U4-U6*/
         tx_time = (range_rx_from_others_ts[counter - 1] + (RX_TO_TX_DLY_UUS * UUS_TO_DWT_TIME)) >> 8;
         tx_ts = (((uint64_t)(tx_time & 0xFFFFFFFEUL)) << 8) + TX_ANT_DLY;
         dwt_setdelayedtrxtime(tx_time);
         for (int i = 0; i < counter; i++)
         {
-            resp_msg_set_ts(&base_tx_msg[10], range_rx_from_others_ts[i]);
+            resp_msg_set_ts(&base_tx_msg[target_uids[i]], range_rx_from_others_ts[i]);
         }
-        resp_msg_set_ts(&base_tx_msg[18], ack_tx_ts);
-        // Serial.print("door=");
-        // Serial.println(door);
-        resp_msg_set_ts_u8(&base_tx_msg[6], 1);
-        resp_msg_set_ts_u8(&base_tx_msg[26], door);
-        resp_msg_set_ts_u8(&base_tx_msg[27], flag);
-        flag = 0;
-        // Serial.print("base=");
-        // Serial.println(base_tx_msg[26]);
+        resp_msg_set_ts(&base_tx_msg[TX_TS_IDX], poll_tx_ts);
         base_tx_msg[MSG_SN_IDX] = frame_seq_nb;
         dwt_writetxdata((uint16_t)(BUF_LEN), base_tx_msg, 0);
         dwt_writetxfctrl((uint16_t)(BUF_LEN), 0, 1);
@@ -473,8 +546,8 @@ void responder()
         if (ret == DWT_SUCCESS)
         {
             while (!(dwt_read32bitreg(SYS_STATUS_ID) & SYS_STATUS_TXFRS_BIT_MASK))
-            {};
-            // Serial.println("收到tag的range后回传成功........");
+            {
+            };
             wait_range = false;
             wait_final = true;
             dwt_write32bitreg(SYS_STATUS_ID, SYS_STATUS_TXFRS_BIT_MASK);
@@ -484,9 +557,9 @@ void responder()
     {
         range_tx_ts = get_tx_timestamp_u64();
         current_debug_millis = millis();
-        // Serial.print("Interval: ");
-        // Serial.print(current_debug_millis - previous_debug_millis);
-        // Serial.print("ms\t");
+        Serial.print("Interval: ");
+        Serial.print(current_debug_millis - previous_debug_millis);
+        Serial.print("ms\t");
         for (int i = REPORT_DISTANCE_FROM; i < counter; i++)
         {
             resp_msg_get_ts(&rx_buffer[i][TX_TS_IDX], &ack_tx_ts);
@@ -499,11 +572,11 @@ void responder()
                   (t_round_1 + t_round_2 + t_reply_1 + t_reply_2) * DWT_TIME_UNITS;
             distance = tof * SPEED_OF_LIGHT;
             snprintf(dist_str, sizeof(dist_str), "%3.3f m\t", distance);
-            // Serial.print(rx_buffer[i][MSG_SID_IDX]);
-            // Serial.print("\t");
-            // Serial.print(dist_str);
+            Serial.print(rx_buffer[i][MSG_SID_IDX]);
+            Serial.print("\t");
+            Serial.print(dist_str);
         }
-        // Serial.println();
+        Serial.println();
         previous_debug_millis = current_debug_millis;
         counter = 0;
         wait_poll = true;

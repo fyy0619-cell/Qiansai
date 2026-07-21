@@ -17,6 +17,8 @@
 
 - **[硬件架构与接线说明](docs/硬件架构与接线说明.md)** — 整体框架、各硬件作用、逐节点引脚接线表、BLE 级联拓扑、搭建步骤（谁接在谁哪里、物理连线）。
 - **[物理接线图解](docs/物理接线图解.md)** — 只讲实际动手接线：哪根杜邦线从哪接到哪、有线/无线之分、接线自检清单。
+- **[UWB 双向测距(TWR)原理与实现](docs/UWB双向测距TWR原理与实现.md)** — DS-TWR 四步握手时序、飞行时间/距离公式推导、U1–U6 多节点组网与代码逐段对照。
+- **[tag 节点详解](环境监测节点代码/tag/README.md)** — 车端 UWB 主控（ESP32-S3）的硬件引脚、FreeRTOS 任务、UWB/IMU/BLE/UART 各模块与开关门逻辑。
 
 ## 系统架构
 
@@ -33,14 +35,14 @@ UWB 标签(车主随身/tag)   ──UWB测距──▶ anchor                  
 |---|---|
 | `qt/` | 树莓派车载 UI（Qt/C++）。串口解析行人坐标、四页面显示、分区摄像头控制、人脸开门。 |
 | `camera/` | 树莓派人脸识别与录像（Python + face_recognition）。`control_file.py` 调度 4 路 `videoX.py`；通过文件与 Qt 通信。 |
-| `环境监测节点代码/anchor/` | 车端主控 ESP32：BLE 汇聚雷达数据 + UWB 测距 + MPU6050 擦碰检测 + WS2812 灯 + UART 上传。 |
-| `环境监测节点代码/tag/` | 车主随身 UWB 标签：按键开关门 + UWB 应答。 |
+| `环境监测节点代码/anchor/` | 车端主控 ESP32（esp32dev）：BLE 汇聚雷达数据 + UWB 测距 + MPU6050 擦碰检测 + WS2812 灯 + UART 上传。 |
+| `环境监测节点代码/tag/` | **UWB 无感交互核心（ESP32-S3 升级版）**：DW3000 双向测距 + MPU6050 擦碰检测 + WS2812 状态灯 + BLE 汇聚雷达坐标 + UART2 上传，FreeRTOS 多任务并行。详见 [tag/README](环境监测节点代码/tag/README.md)。 |
 | `环境监测节点代码/BLE1~BLE3/` | 毫米波雷达采集节点（HiLink 2450），BLE 级联上报；BLE2 含 PN532 NFC 开门。 |
 | `环境监测节点代码/thingscloud/` | 擦碰事件上云（ThingsCloud MQTT）触发微信预警。 |
 
 ## 硬件 / 平台
 
-- 主控：树莓派5、ESP32（esp32dev，Arduino 框架，PlatformIO 构建）
+- 主控：树莓派5、ESP32（esp32dev）；tag 节点已升级为 **ESP32-S3**（esp32-s3-devkitc-1，16MB Flash）。均为 Arduino 框架、PlatformIO 构建。
 - 传感器：DW3000 UWB、HiLink LD2450 毫米波雷达、PN532 NFC、MPU6050 IMU
 - 执行：WS2812B 灯带、继电器门锁、摄像头
 

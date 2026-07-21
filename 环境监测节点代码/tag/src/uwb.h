@@ -7,9 +7,9 @@
 
 #define NUM_NODES 2
 #define INTERVAL 5 /* MAX FPS = 1000 / INTERVAL */
-#define UWB_RST 27
-#define UWB_IRQ 34
-#define UWB_SS 5
+#define UWB_RST 7
+#define UWB_IRQ 5
+#define UWB_SS 14
 
 #define FUNC_CODE_INTER 0xE2
 #define FUNC_CODE_RESET 0xE3
@@ -97,8 +97,8 @@
 #define TX_TS_IDX 10 /* byte index of transmitter ts */
 #define RESP_MSG_TS_LEN 4
 #define TX_TO_RX_DLY_UUS 100
-#define RX_TO_TX_DLY_UUS 10000
-#define RX_TIMEOUT_UUS 4000000  //4s=4000000uus
+#define RX_TO_TX_DLY_UUS 1000
+#define RX_TIMEOUT_UUS 400000  //4s=4000000uus
 
 extern uint8_t tag_tx_msg[], base_tx_msg[];
 extern uint8_t frame_seq_nb;
@@ -121,8 +121,11 @@ extern int millis_since_last_serial_print;
 extern uint32_t tx_time;
 extern uint64_t tx_ts;
 extern float clockOffsetRatioAck, clockOffsetRatioFinal;
-extern volatile uint8_t door; 
-extern volatile uint8_t flag; 
+extern volatile double distance0,dis0;
+extern uint8_t door[NUM_NODES - 1]; 
+extern volatile uint8_t door1;
+extern volatile uint8_t is_uwb;
+extern volatile uint8_t qf_uwb;
 void start_uwb();
 void initiator();
 void responder();

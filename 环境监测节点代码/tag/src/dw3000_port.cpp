@@ -76,9 +76,9 @@ void deca_usleep(uint8_t time_us) // wrapper for decawave sleep function
   sleepus(time_us);
 }
 
-#define SPI_SCK 18
-#define SPI_MISO 19
-#define SPI_MOSI 23
+#define SPI_SCK 12
+#define SPI_MISO 13
+#define SPI_MOSI 11
 void spiBegin(uint8_t irq, uint8_t rst)
 {
   /*DDR_SPI = _BV(DD_MOSI)|_BV(DD_SCK)|_BV(DD_SS); // Set MOSI, SCK and CS output

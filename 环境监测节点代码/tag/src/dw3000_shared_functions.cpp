@@ -22,7 +22,7 @@
  *
  * @return none
  */
-void check_for_status_errors(uint32_t reg, uint32_t *errors)
+void check_for_status_errors(uint32_t reg, uint32_t * errors)
 {
     uint16_t stsStatus = 0;
 
@@ -246,7 +246,7 @@ void set_delayed_rx_time(uint32_t delay, dwt_config_t *config_options)
 
     /* Length of the STS effects the size of the frame also.
      * This means the delay required is greater for larger STS lengths. */
-    delay_time += ((1 << (config_options->stsLength + 2)) * 8);
+    delay_time += ((1<<(config_options->stsLength+2))*8);
 
     dwt_setdelayedtrxtime((uint32_t)((delay_time * UUS_TO_DWT_TIME) >> 8));
 }
@@ -278,7 +278,7 @@ void set_resp_rx_timeout(uint32_t delay, dwt_config_t *config_options)
     case DWT_STS_LEN_512:
     case DWT_STS_LEN_1024:
     case DWT_STS_LEN_2048:
-        delay_time += ((1 << (config_options->stsLength + 2)) * 8);
+        delay_time += ((1<<(config_options->stsLength+2))*8);
         break;
     case DWT_STS_LEN_32:
     case DWT_STS_LEN_64:
@@ -313,7 +313,7 @@ void resync_sts(uint32_t newCount)
     // that is set.
     uint32_t iv_value = newCount;
 
-    iv_value += ((1 << (config_options.stsLength + 2)) * 8) / 2;
+    iv_value += ((1<<(config_options.stsLength+2))*8)/2;
 
     /* Write the new STS count value to the appropriate register and reload the value into the counter */
     dwt_write32bitreg(STS_IV0_ID, iv_value);
@@ -333,24 +333,22 @@ void resync_sts(uint32_t newCount)
  */
 void resp_msg_get_ts(uint8_t *ts_field, uint64_t *ts)
 {
-    *ts = 0; // 先清零
+    *ts = 0;  // 先清零
     for (uint8_t i = 0; i < RESP_MSG_TS_LEN; i++)
     {
-        *ts |= (uint64_t)ts_field[i] << (i * 8); // 按位或拼接
+        *ts |= (uint64_t)ts_field[i] << (i * 8);  // 按位或拼接
     }
     // uint8_t i;
     // for (i = 0; i < RESP_MSG_TS_LEN; i++)
     // {
-    //     ts = ts + (ts_field[i] << (i * 8));
+    //     ts = ts + (uint64_t)(ts_field[i] << (i * 8));
     // }
 }
-// int i;
-// *ts = 0;
-// for (i = 0; i < RESP_MSG_TS_LEN; i++)
-// {
-//     *ts += (uint32_t)ts_field[i] << (i * 8);
-// }
-
+void resp_msg_get_ts_u8(uint8_t *ts_field, uint8_t ts)
+{
+    ts = 0;  // 先清零
+    ts = *ts_field;
+}
 /*! ------------------------------------------------------------------------------------------------------------------
  * @fn get_tx_timestamp_u64()
  *
@@ -459,9 +457,4 @@ void resp_msg_set_ts(uint8_t *ts_field, const uint64_t ts)
     {
         ts_field[i] = (uint8_t)(ts >> (i * 8));
     }
-}
-void resp_msg_set_ts_u8(uint8_t *ts_field, uint8_t ts)
-{
-    *ts_field = 0;
-    *ts_field = ts;
 }
